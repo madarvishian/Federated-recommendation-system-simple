@@ -1,0 +1,122 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, TensorDataset
+import matplotlib.pyplot as plt
+
+# Load the MovieLens dataset
+url = "http://files.grouplens.org/datasets/movielens/ml-100k/u.data"
+columns = ['user_id', 'item_id', 'rating', 'timestamp']
+df = pd.read_csv(url, sep='\t', names=columns)
+
+# Split the dataset into training and testing sets
+train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+
+# Convert the data to PyTorch tensors
+user_ids_train = torch.tensor(train_df['user_id'].values, dtype=torch.long)
+item_ids_train = torch.tensor(train_df['item_id'].values, dtype=torch.long)
+ratings_train = torch.tensor(train_df['rating'].values, dtype=torch.float)
+
+user_ids_test = torch.tensor(test_df['user_id'].values, dtype=torch.long)
+item_ids_test = torch.tensor(test_df['item_id'].values, dtype=torch.long)
+ratings_test = torch.tensor(test_df['rating'].values, dtype=torch.float)
+
+# Define the recommendation model using PyTorch
+class RecommendationModel(nn.Module):
+    def __init__(self, num_users, num_items, embedding_dim=50):
+        super(RecommendationModel, self).__init__()
+        self.user_embedding = nn.Embedding(num_users+1, embedding_dim)
+        self.item_embedding = nn.Embedding(num_items+1, embedding_dim)
+        self.fc = nn.Linear(embedding_dim * 2, 1)
+
+    def forward(self, user_ids, item_ids):
+        user_embedded = self.user_embedding(user_ids)
+        item_embedded = self.item_embedding(item_ids)
+        concat_embedded = torch.cat([user_embedded, item_embedded], dim=1)
+        output = self.fc(concat_embedded)
+        return output
+
+# Initialize the model, optimizer, and loss function
+num_users = df['user_id'].nunique()
+num_items = df['item_id'].nunique()
+model = RecommendationModel(num_users, num_items)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.MSELoss()
+
+# Training loop
+num_epochs = 60
+batch_size = 64
+
+train_dataset = TensorDataset(user_ids_train, item_ids_train, ratings_train)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+test_dataset = TensorDataset(user_ids_test, item_ids_test, ratings_test)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+# Lists to store training and test RMSE for each epoch
+train_rmse_list = []
+test_rmse_list = []
+
+for epoch in range(num_epochs):
+    model.train()
+    total_loss = 0.0
+    num_batches = 0
+
+    for batch_user_ids, batch_item_ids, batch_ratings in train_loader:
+        optimizer.zero_grad()
+        outputs = model(batch_user_ids, batch_item_ids).squeeze()
+        loss = criterion(outputs, batch_ratings)
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+        num_batches += 1
+
+    average_loss = total_loss / num_batches
+    train_rmse_list.append(average_loss)
+
+    # Evaluate on the test set
+    model.eval()
+    total_loss = 0.0
+    num_batches = 0
+
+    with torch.no_grad():
+        for batch_user_ids, batch_item_ids, batch_ratings in test_loader:
+            outputs = model(batch_user_ids, batch_item_ids).squeeze()
+            loss = criterion(outputs, batch_ratings)
+            total_loss += loss.item()
+            num_batches += 1
+
+    average_loss = total_loss / num_batches
+    test_rmse_list.append(average_loss)
+
+    # Print the loss after each epoch
+    print(f"Epoch {epoch + 1}/{num_epochs}, Train Loss: {train_rmse_list[-1]}, Test Loss: {test_rmse_list[-1]}")
+
+# Plotting the RMSE over epochs
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, num_epochs + 1), train_rmse_list, label='Train RMSE')
+plt.plot(range(1, num_epochs + 1), test_rmse_list, label='Test RMSE')
+plt.xlabel('Epoch')
+plt.ylabel('RMSE')
+plt.title('Training and Test RMSE Over Epochs')
+plt.legend()
+plt.show()
+
+
+# Evaluate on the test set
+test_dataset = TensorDataset(user_ids_test, item_ids_test, ratings_test)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+model.eval()
+total_loss = 0.0
+with torch.no_grad():
+    for batch_user_ids, batch_item_ids, batch_ratings in test_loader:
+        outputs = model(batch_user_ids, batch_item_ids).squeeze()
+        loss = criterion(outputs, batch_ratings)
+        total_loss += loss.item()
+
+average_loss = total_loss / len(test_loader)
+print(f"Average Test Loss: {average_loss}")
